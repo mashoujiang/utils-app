@@ -1,0 +1,86 @@
+#!/bin/sh
+#
+# An example hook script to prepare the commit log message.
+# Called by "git commit" with the name of the file that has the
+# commit message, followed by the description of the commit
+# message's source.  The hook's purpose is to edit the commit
+# message file.  If the hook fails with a non-zero status,
+# the commit is aborted.
+#
+# To enable this hook, rename this file to "prepare-commit-msg".
+
+# This hook includes three examples.  The first comments out the
+# "Conflicts:" part of a merge commit.
+#
+# The second includes the output of "git diff --name-status -r"
+# into the message, just before the "git status" output.  It is
+# commented because it doesn't cope with --amend or with squashed
+# commits.
+#
+# The third example adds a Signed-off-by line to the message, that can
+# still be edited.  This is rarely a good idea.
+
+# case "$2,$3" in
+#   merge,)
+#     /usr/bin/perl -i.bak -ne 's/^/# /, s/^# #/#/ if /^Conflicts/ .. /#/; print' "$1" ;;
+
+# ,|template,)
+#   /usr/bin/perl -i.bak -pe '
+#      print "\n" . `git diff --cached --name-status -r`
+#	 if /^#/ && $first++ == 0' "$1" ;;
+
+#   *) ;;
+# esac
+
+# SOB=$(git var GIT_AUTHOR_IDENT | sed -n 's/^\(.*>\).*$/Signed-off-by: \1/p')
+# grep -qs "^$SOB" "$1" || echo "$SOB" >> "$1"
+
+_gen_ChangeIdInput() {
+	echo "tree `git write-tree`"
+	if parent=`git rev-parse "HEAD^0" 2>/dev/null`
+	then
+		echo "parent $parent"
+	fi
+	echo "author `git var GIT_AUTHOR_IDENT`"
+	echo "committer `git var GIT_COMMITTER_IDENT`"
+	echo
+	printf '%s' "$clean_message"
+}
+_gen_ChangeId() {
+	_gen_ChangeIdInput |
+	git hash-object -t commit --stdin
+}
+
+username=`git config user.name`
+email=`git config user.email`
+if [ -z "$username" ] || [ -z "$email" ]; then
+  echo "Please set your user name and email address first, with following commands:"
+  echo "  git config --global user.name \"example name\""
+  echo "  git config --global user.email \"example_email@example.com\""
+  exit 1
+fi
+
+commitFile=$1
+commitMsg=`cat $commitFile`
+hasChangeId=`echo "$commitMsg" | grep "Change-Id"`
+hasSignOff=`echo "$commitMsg" | grep "Signed-off-by"`
+
+if [ -n "$hasChangeId" ]; then
+  if [ ! -n "$hasSignOff" ]; then
+    signOff="Signed-off-by: $username <$email>"
+    sed -i "/Change-Id/ a\\$changeId" $commitFile
+  fi
+else
+  changeId="Change-Id: I"`_gen_ChangeId`
+  if [ -n "$hasSignOff" ]; then
+    sed -i "/Signed-off-by/ i\\$changeId" $commitFile
+  else
+    signOff="Signed-off-by: $username <$email>"
+    multiLines="$changeId\n$signOff"
+    # insert Change-id and Signed-off-by lines before the first comment line
+    sed -i "0,/^#/s/^#/\n\\$multiLines\n&/" $commitFile
+    if [ $? -ne 0 ]; then
+      echo "\n$multiLines\n" >> $commitFile
+    fi
+  fi
+fi
